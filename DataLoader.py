@@ -1,37 +1,118 @@
-from torch.utils.data import random_split,  DataLoader
+import os
+import pickle
+from torch.utils.data import DataLoader, TensorDataset
 import pytorch_lightning as pl
-from typing import Optional
+import torch
 
-
-class DataLoader(pl.LightningDataModule):
-    def __init__(self, dataset, batch_size: int = 32, num_workers: int = 4, val_split: float = 0.2):
+class RetrievalDataLoader(pl.LightningDataModule):
+    def __init__(self, data_dir, years, state_names, label_key, batch_size=64, test_year=2021):
         super().__init__()
-        self.dataset = dataset
+        self.data_dir = data_dir
+        self.years = years
+        self.state_names = state_names
+        self.label_key = label_key
         self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.val_split = val_split
+        self.test_year = test_year
+        self.processed_data = []
+        self.test_data = []
 
-    def prepare_data(self):
-        """
-        Need to sample from the large year files and save as a single training file
-        https://pytorch-lightning.readthedocs.io/en/latest/data/datamodule.html#prepare-data
-        """
-        pass
-
-    def setup(self, stage: Optional[str] = None):
+    def setup(self, stage=None):
         if stage == 'fit' or stage is None:
-            val_len = int(len(self.dataset) * self.val_split)
-            train_len = len(self.dataset) - val_len
-            self.train_dataset, self.val_dataset = random_split(self.dataset, [train_len, val_len])
-
+            res_sims_list, states_list, labels_list = [], [], []
+            for year in self.years:
+                file_name = os.path.join(self.data_dir, f'data_{year}.pkl')
+                year_data = self.load_pickle(file_name)
+                for sample in year_data:
+                    res_sims_list.append(sample['res_sims'])
+                    states_list.append({name: sample['states'][name] for name in self.state_names})
+                    labels_list.append(sample['states'][self.label_key])
+            self.res_sims_tensor = torch.tensor(res_sims_list)
+            self.states_tensor = torch.tensor(states_list)
+            self.labels_tensor = torch.tensor(labels_list)
+        
         if stage == 'test' or stage is None:
-            self.test_dataset = self.dataset
+            test_res_sims_list, test_states_list, test_labels_list = [], [], []
+            file_name = os.path.join(self.data_dir, f'data_{self.test_year}.pkl')
+            test_year_data = self.load_pickle(file_name)
+            for sample in test_year_data:
+                test_res_sims_list.append(sample['res_sims'])
+                test_states_list.append({name: sample['states'][name] for name in self.state_names})
+                test_labels_list.append(sample['states'][self.label_key])
+            self.test_res_sims_tensor = torch.tensor(test_res_sims_list)
+            self.test_states_tensor = torch.tensor(test_states_list)
+            self.test_labels_tensor = torch.tensor(test_labels_list)
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
-
-    def val_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        dataset = TensorDataset(self.res_sims_tensor, self.states_tensor, self.labels_tensor)
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
     def test_dataloader(self):
-        return DataLoader(self.test_dataset, batch_size=self.batch_size, num_workers=self.num_workers)
+        test_dataset = TensorDataset(self.test_res_sims_tensor, self.test_states_tensor, self.test_labels_tensor)
+        return DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False)
+
+    def load_pickle(self, file_name):
+        with open(file_name, 'rb') as f:
+            data = pickle.load(f)
+        return data
+    
+
+class DenoisingDataLoader(pl.LightningDataModule):
+    def __init__(self, data_dir, years, state_names, batch_size=64, test_year=2021):
+        super().__init__()
+        self.data_dir = data_dir
+        self.years = years
+        self.state_names = state_names
+        self.batch_size = batch_size
+        self.test_year = test_year
+        self.processed_data = []
+        self.test_data = []
+
+    def setup(self, stage=None):
+        if stage == 'fit' or stage is None:
+            res_sims_list, states_list, res_obs_list = [], [], []
+            for year in self.years:
+                file_name = os.path.join(self.data_dir, f'data_{year}.pkl')
+                year_data = self.load_pickle(file_name)
+                for sample in year_data:
+                    if sample['states'].get('outcome_flag') != 1:
+                        continue
+                    res_sims_list.append(sample['res_sims'])
+                    states_list.append({name: sample['states'][name] for name in self.state_names})
+                    res_obs_list.append(sample['res_obs'])
+            self.res_sims_tensor = torch.tensor(res_sims_list)
+            self.states_tensor = torch.tensor(states_list)
+            self.res_obs_tensor = torch.tensor(res_obs_list)
+        
+        if stage == 'test' or stage is None:
+            test_res_sims_list, test_states_list, test_res_obs_list = [], [], []
+            file_name = os.path.join(self.data_dir, f'data_{self.test_year}.pkl')
+            test_year_data = self.load_pickle(file_name)
+            for sample in test_year_data:
+                if sample['states'].get('outcome_flag') != 1:
+                    continue
+                test_res_sims_list.append(sample['res_sims'])
+                test_states_list.append({name: sample['states'][name] for name in self.state_names})
+                test_res_obs_list.append(sample['res_obs'])
+            self.test_res_sims_tensor = torch.tensor(test_res_sims_list)
+            self.test_states_tensor = torch.tensor(test_states_list)
+            self.test_res_obs_tensor = torch.tensor(test_res_obs_list)
+
+    def train_dataloader(self):
+        dataset = TensorDataset(self.res_sims_tensor, self.states_tensor, self.res_obs_tensor)
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+
+    def test_dataloader(self):
+        test_dataset = TensorDataset(self.test_res_sims_tensor, self.test_states_tensor, self.test_res_obs_tensor)
+        return DataLoader(test_dataset, batch_size=self.batch_size, shuffle=False)
+
+    def load_pickle(self, file_name):
+        with open(file_name, 'rb') as f:
+            data = pickle.load(f)
+        return data
+
+# Usage
+# selected_state_names = ['state1', 'state2']  # replace with actual state names you're interested in
+# data_loader_module = DenoisingDataLoader('/path/to/your/pickles', range(2000, 2020), selected_state_names)
+# trainer = pl.Trainer()
+# trainer.fit(model, datamodule=data_loader_module)
+# trainer.test(datamodule=data_loader_module)
