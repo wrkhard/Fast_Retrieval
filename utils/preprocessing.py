@@ -4,6 +4,8 @@ import pickle
 import glob
 from multiprocessing import Pool
 
+# TODO finish adding num_colors to pickle file
+
 def make_pool_map(years, months, days):
     year_month = []
     if days is not None:
@@ -265,15 +267,10 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
             uncerts = uncerts[states[:, idx] == 3, :]
             wls = wls[states[:, idx] == 3, :]
             states = states[states[:, idx] == 3, :]
+            num_colors = num_colors[states[:, idx] == 3, :]
             states = np.delete(states, idx, 1)
             state_names.remove('PreprocessingResults/cloud_flag_idp')
 
-            # remove very long wavelengths with a lot of missing data                                                          
-            ref_sims = ref_sims[:, :2100]
-            ref_sims_no_eof = ref_sims_no_eof[:, :2100]
-            wls = wls[:, :2100]
-            ref_obs = ref_obs[:, :2100]
-            uncerts = uncerts[:, :2100]
 
             # downsample data to be saved                                                                                      
             if downsample:
@@ -287,14 +284,15 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
                 ref_sims_no_eof = ref_sims_no_eof[idx, :]
                 uncerts = uncerts[idx, :]
                 states = states[idx, :]
+                num_colors = num_colors[idx, :]
 
             # save everything as pickle file
             if auto_encoder_test:
-                save_data = {'ref_sim_w_eof' : ref_sims,'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names}
+                save_data = {'ref_sim_w_eof' : ref_sims,'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
                 pickle.dump(save_data, open(save_name, "wb"), protocol=4)
                 print('done')
             else:
-                save_data = {'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names}
+                save_data = {'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
                 pickle.dump(save_data, open(save_name, "wb"), protocol=4)
                 print('done')
         else:
@@ -307,15 +305,9 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
             uncerts = uncerts[states[:, idx] == 3, :]
             wls = wls[states[:, idx] == 3, :]
             states = states[states[:, idx] == 3, :]
-            states = np.delete(states, idx, 1)
-            state_names.remove('PreprocessingResults/cloud_flag_idp')
+            num_colors = num_colors[states[:, idx] == 3, :]
 
-            # remove very long wavelengths with a lot of missing data                                                          
-            ref_sims = ref_sims[:, :2100]
-            ref_sims_no_eof = ref_sims_no_eof[:, :2100]
-            wls = wls[:, :2100]
-            ref_obs = ref_obs[:, :2100]
-            uncerts = uncerts[:, :2100]
+
 
             # downsample data to be saved                                                                                      
             if downsample:
@@ -329,9 +321,10 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
                 ref_sims_no_eof = ref_sims_no_eof[idx, :]
                 uncerts = uncerts[idx, :]
                 states = states[idx, :]
+                num_colors = num_colors[idx, :]
 
             # save everything as pickle file
-            save_data = {'ref_sim': ref_sims, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names}
+            save_data = {'ref_sim': ref_sims, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
             pickle.dump(save_data, open(save_name, "wb"), protocol=4)
             print('done')
 
@@ -442,7 +435,8 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
         uncerts = uncerts[states[:, idx] ==100, :]
         wls = wls[states[:, idx] ==100, :]
         states = states[states[:, idx] ==100, :]
-        states = np.delete(states, idx, 1)
+        num_colors = num_colors[states[:, idx] ==100, :]
+
         
 
 
@@ -587,15 +581,10 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
             uncerts = uncerts[states[:, idx] == 3, :]
             wls = wls[states[:, idx] == 3, :]
             states = states[states[:, idx] == 3, :]
+            num_colors = num_colors[states[:, idx] == 3, :]
             states = np.delete(states, idx, 1)
             state_names.remove('PreprocessingResults/cloud_flag_idp')
 
-            # remove very long wavelengths with a lot of missing data
-            ref_sims = ref_sims[:, :2100]
-            ref_sims_no_eof = ref_sims_no_eof[:, :2100]
-            wls = wls[:, :2100]
-            ref_obs = ref_obs[:, :2100]
-            uncerts = uncerts[:, :2100]
 
             # downsample data to be saved
             if downsample:
@@ -609,14 +598,15 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
                 ref_sims_no_eof = ref_sims_no_eof[idx, :]
                 uncerts = uncerts[idx, :]
                 states = states[idx, :]
+                num_colors = num_colors[idx, :]
 
             # save everything as pickle file
             if auto_encoder_test:
-                save_data = {'ref_sim_w_eof' : ref_sims,'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names}
+                save_data = {'ref_sim_w_eof' : ref_sims,'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
                 pickle.dump(save_data, open(save_name, "wb"), protocol=4)
                 print('done')
             else:
-                save_data = {'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names}
+                save_data = {'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
                 pickle.dump(save_data, open(save_name, "wb"), protocol=4)
                 print('done')
         else:
@@ -632,12 +622,7 @@ def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True
             states = np.delete(states, idx, 1)
             state_names.remove('PreprocessingResults/cloud_flag_idp')
 
-            # remove very long wavelengths with a lot of missing data
-            ref_sims = ref_sims[:, :2100]
-            ref_sims_no_eof = ref_sims_no_eof[:, :2100]
-            wls = wls[:, :2100]
-            ref_obs = ref_obs[:, :2100]
-            uncerts = uncerts[:, :2100]
+
 
             # downsample data to be saved
             if downsample:
