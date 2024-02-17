@@ -4,656 +4,272 @@ import pickle
 import glob
 from multiprocessing import Pool
 
-# TODO finish adding num_colors to pickle file
-
-def make_pool_map(years, months, days):
-    year_month = []
-    if days is not None:
+def make_pool_map(years,months,days):
+    pool_map = []
+    if days is None:
+        for year in years:
+            for month in months:
+                pool_map.append([year,month])
+        return pool_map
+    else: 
         for year in years:
             for month in months:
                 for day in days:
-                    year_month.append((year,month,day))
-    else:
-        for year in years:
-            for month in months:
-                year_month.append((year,month))
+                    pool_map.append([year,month,day])
+        return pool_map
 
-    return year_month
+def main(pool_map,nadir=True,downsample=True,debug=False,):
 
-
-def main(pool_map,nadir = False,downsample = True,remove_eofs =True,debug = True, auto_encoder_test = False):
-    
     year = pool_map[0]
     month = pool_map[1]
     day = pool_map[2]
-    
-    
+
     if nadir:
-        save_name = './L2DiaND_XCO2_' + year + '_'+month+'_'+day+'.p'
+        save_name = '/scratch-science/algorithm/wkeely/Data/L2DiaND_XCO2_' + year + '_'+month+'_'+day+'.p'
         files = glob.glob('/data/oco2/ops/product/Ops_B11006_r02/' + year + '/'+ month+'/'+day+'/L2Dia/oco2_L2DiaND*.h5')
-
-        if debug:
-            files = files[::100] # for debugging. Comment out later for full data.
-        
-        ref_sim = 'SpectralParameters/modeled_radiance'
-        ref_ob = 'SpectralParameters/measured_radiance'
-        ob_uncert = 'SpectralParameters/measured_radiance_uncert'
-        sample_idx = 'SpectralParameters/sample_index'
-        num_color = 'SpectralParameters/num_colors_per_band'
-
-
-        var_names = ['RetrievalResults/surface_pressure_apriori_fph',
-                    'RetrievalResults/wind_speed_apriori', 'RetrievalResults/eof_1_scale_weak_co2', 'RetrievalResults/eof_1_scale_strong_co2',
-                        'RetrievalResults/eof_1_scale_o2', 'RetrievalResults/eof_2_scale_weak_co2', 'RetrievalResults/eof_2_scale_strong_co2', 
-                        'RetrievalResults/eof_2_scale_o2', 'RetrievalResults/eof_3_scale_weak_co2', 'RetrievalResults/eof_3_scale_strong_co2',
-                        'RetrievalResults/eof_3_scale_o2', 'RetrievalGeometry/retrieval_solar_zenith', 'RetrievalGeometry/retrieval_zenith',
-                            'RetrievalGeometry/retrieval_solar_azimuth', 'RetrievalGeometry/retrieval_azimuth', 'PreprocessingResults/surface_pressure_apriori_abp', 
-                            'PreprocessingResults/dispersion_multiplier_abp', 'RetrievalHeader/sounding_id',
-                            'RetrievalGeometry/retrieval_longitude', 'RetrievalGeometry/retrieval_latitude',
-                                'RetrievalResults/xco2', 'RetrievalGeometry/retrieval_solar_zenith',
-                        'RetrievalGeometry/retrieval_land_fraction', 'RetrievalGeometry/retrieval_solar_distance',
-                        'PreprocessingResults/cloud_flag_idp']
-
-
-        print('Reading State Vectors')
-        # # get radiance
-        ref_sims = []
-        ref_obs = []
-        uncerts = []
-        sample_idxs = []
-        num_colors = []
-        wls = []
-        state_names = []
-        states = []
-        f_vars = [] 
-        for file in files:
-            print(file)
-            f = h5.File(file, 'r')
-            # get radiance
-            r_sim = f.get(ref_sim)[()]
-            r_ob = f.get(ref_ob)[()]
-            r_uncert = f.get(ob_uncert)[()]
-            r_sample_idx = f.get(sample_idx)[()]
-            r_color = f.get(num_color)[()]
-            if len(r_sim) < 10:
-                print('skipping because len(r_sim) = ' + str(len(r_sim)))
-                continue
-            if len(r_ob) < 10:
-                print('skipping because len(r_ob) = ' + str(len(r_ob)))
-                continue
-            if r_sim.shape[1] >= 2300:  # 68
-                print('skipping because r_sim.shape[1] = ' + str(r_sim.shape[1]))
-                continue
-            if r_ob.shape[1] >= 2300:  # 68
-                print('skipping because r_ob.shape[1] = ' + str(r_ob.shape[1]))
-                continue
-            # get wavelengths
-            w = f.get('SpectralParameters/wavelength')[()]
-            # get vars
-            vars = []  # list that contains the vars
-            for v in var_names:
-                # print(v) # uncomment for debugging
-                var = f.get(v)[()]
-                if var.ndim == 2:  # for 2D variables (e.g. CO2 profile)
-                    # split up into multiple variables
-                    for i in range(var.shape[1]):
-                        var_i = var[:, i]
-                        vars.append(var_i)
-                        state_names.append(v + str(i))
-                else:
-                    vars.append(var)
-                    state_names.append(v)
-            # make into numpy array
-            vars = np.stack(vars, 1)
-            # if vars.shape[1] <= len(var_names):  # 68
-            #     print('skipping because vars.shape[1] = ' + str(vars.shape[1]))
-            #     continue
-
-            # append to list
-            ref_sims.append(r_sim)
-            ref_obs.append(r_ob)
-            uncerts.append(r_uncert)
-            sample_idxs.append(r_sample_idx)
-            num_colors.append(r_color)
-            wls.append(w)
-            f_vars.append(vars)
-
-        ref_sims = np.concatenate(ref_sims, 0)
-        ref_obs = np.concatenate(ref_obs, 0)
-        uncerts = np.concatenate(uncerts, 0)
-        sample_idxs = np.concatenate(sample_idxs, 0)
-        num_colors = np.concatenate(num_colors, 0)
-        wls = np.concatenate(wls, 0)
-        states = np.concatenate(f_vars, 0)
-
-        if remove_eofs:
-            print('Removing EOFs ...')
-
-            # EOF path
-            eof_path = './EOF/OCO2_qtsb11_eofs_00000-40000_oceanG_alt2_falt1_L2.h5'
-            eof_file = h5.File(eof_path, 'r')
-
-            # EOFs for O2A band for each footprint
-            eof_1_o2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_1_waveform_1'][:]
-            eof_2_o2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_2_waveform_1'][:]
-            eof_3_o2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_3_waveform_1'][:]
-
-            # EOFs for WCO2 band for each footprint
-            eof_1_wco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_1_waveform_2'][:]
-            eof_2_wco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_2_waveform_2'][:]
-            eof_3_wco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_3_waveform_2'][:]
-
-            # EOFs for SCO2 band for each footprint
-            eof_1_sco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_1_waveform_3'][:]
-            eof_2_sco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_2_waveform_3'][:]
-            eof_3_sco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Land/EOF_3_waveform_3'][:]
-
-            # get the footprint which is the last digit of the sounding id
-            idx = state_names.index('RetrievalHeader/sounding_id')
-            sid = states[:, idx]
-            footprints = sid % 10
-            footprints = footprints.astype(int)
-
-            # get the scaling factors for each eof
-            eof_scale_1_1 = states[:, state_names.index('RetrievalResults/eof_1_scale_o2')]
-            eof_scale_1_2 = states[:, state_names.index('RetrievalResults/eof_2_scale_o2')]
-            eof_scale_1_3 = states[:, state_names.index('RetrievalResults/eof_3_scale_o2')]
-
-            eof_scale_2_1 = states[:, state_names.index('RetrievalResults/eof_1_scale_weak_co2')]
-            eof_scale_2_2 = states[:, state_names.index('RetrievalResults/eof_2_scale_weak_co2')]
-            eof_scale_2_3 = states[:, state_names.index('RetrievalResults/eof_3_scale_weak_co2')]
-
-            eof_scale_3_1 = states[:, state_names.index('RetrievalResults/eof_1_scale_strong_co2')]
-            eof_scale_3_2 = states[:, state_names.index('RetrievalResults/eof_2_scale_strong_co2')]
-            eof_scale_3_3 = states[:, state_names.index('RetrievalResults/eof_3_scale_strong_co2')]
-
-            ref_sims_no_eof = []
-
-            # replace sample indices with -2147483647 with np.nan
-            # sample_idxs[sample_idxs == -2147483647] = np.nan
-
-            for idx, fp in enumerate(footprints):
-                print(idx, fp)
-                print(ref_sims[idx].shape)
-                print(uncerts[idx].shape)
-                print(sample_idxs[idx].shape)
-                print(num_colors[idx].shape)
-                print(eof_1_o2[fp].shape)
-
-                padding = np.zeros(np.sum(ref_sims[idx]==-9.9999900e+05))
-                padding.fill(-9.9999900e+10) # padding will return to e+05 after subtracting off eof
-                #print(padding.shape)
-                # O2A band
-                x = eof_1_o2[fp,sample_idxs[idx,:num_colors[idx,0]]] * uncerts[idx,:num_colors[idx,0]]
-                # if idx == 0:
-                #     plt.plot(x),plt.show()
-                #     print(x.shape)
-                s11 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t11 = (x * s11)
-                term_o2_1 = t11  * eof_scale_1_1[idx]
-
-                x = eof_2_o2[fp,sample_idxs[idx,:num_colors[idx,0]]] * uncerts[idx,:num_colors[idx,0]]
-                s12 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t12 = (x * s12)
-                term_o2_2 = t12 * eof_scale_1_2[idx]
-
-                x = eof_3_o2[fp,sample_idxs[idx,:num_colors[idx,0]]] * uncerts[idx,:num_colors[idx,0]]
-                s13 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t13 = (x * s13)
-                term_o2_3 = t13 * eof_scale_1_3[idx]
-
-                # terms to concatenate for o2a band.
-                term1 = (term_o2_1+term_o2_2+term_o2_3)
-
-                #WCO2 band
-                x = eof_1_wco2[fp,sample_idxs[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]] * uncerts[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]
-                # if idx == 0:
-                #     plt.plot(x),plt.show()
-                #     print(x.shape)
-                s21 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t21 = (x * s21)
-                term_wco2_1 = t21 * eof_scale_2_1[idx]
-
-                x = eof_2_wco2[fp,sample_idxs[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]] * uncerts[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]
-                s22 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t22 = (x * s22)
-                term_wco2_2 = t22 * eof_scale_2_2[idx]
-
-                x = eof_3_wco2[fp,sample_idxs[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]] * uncerts[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]
-                s23 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t23 = (x * s23)
-                term_wco2_3 = t23 * eof_scale_2_3[idx]
-
-                # terms to concatenate for wco2 band.
-                term2 = (term_wco2_1+term_wco2_2+term_wco2_3)
-                
-                #SCO2 band
-                x = eof_1_sco2[fp,sample_idxs[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]] * uncerts[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]
-                # if idx == 0:
-                #     plt.plot(x),plt.show()
-                #     print(x.shape)
-                s31 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t31 = (x * s31)
-                term_sco2_1 = t31 * eof_scale_3_1[idx]
-
-                x = eof_2_sco2[fp,sample_idxs[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]] * uncerts[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]
-                s32 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t32 = (x * s32)
-                term_sco2_2 = t32 * eof_scale_3_2[idx]
-
-                x = eof_3_sco2[fp,sample_idxs[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]] * uncerts[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]
-                s33 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t33 = (x * s33)
-                term_sco2_3 = t33 * eof_scale_3_3[idx]
-
-                # terms to concatenate for sco2 band.
-                term3 = (term_sco2_1+term_sco2_2+term_sco2_3)
-
-                
-                # concatenate the terms
-                scaled_eof = np.concatenate((term1,term2,term3,padding),axis=0)
-                ref_sims_no_eof.append(ref_sims[idx,:] - scaled_eof)
-
-
-            # same shape as ref_sims
-            ref_sims_no_eof = np.stack(ref_sims_no_eof,0)
-
-
-            # remove data with clouds                                                                                          
-            idx = state_names.index('PreprocessingResults/cloud_flag_idp')
-            ref_sims = ref_sims[states[:, idx] == 3, :]
-            ref_sims_no_eof = ref_sims_no_eof[states[:, idx] == 3, :]
-            ref_obs = ref_obs[states[:, idx] == 3, :]
-            uncerts = uncerts[states[:, idx] == 3, :]
-            wls = wls[states[:, idx] == 3, :]
-            states = states[states[:, idx] == 3, :]
-            num_colors = num_colors[states[:, idx] == 3, :]
-            states = np.delete(states, idx, 1)
-            state_names.remove('PreprocessingResults/cloud_flag_idp')
-
-
-            # downsample data to be saved                                                                                      
-            if downsample:
-                percent_sample = 0.4
-                # randomly sample the array                                                                                    
-                np.random.seed(0)
-                idx = np.random.choice(ref_sims.shape[0], int(ref_sims.shape[0]*percent_sample), replace=False)
-                ref_sims = ref_sims[idx, :]
-                wls = wls[idx, :]
-                ref_obs = ref_obs[idx, :]
-                ref_sims_no_eof = ref_sims_no_eof[idx, :]
-                uncerts = uncerts[idx, :]
-                states = states[idx, :]
-                num_colors = num_colors[idx, :]
-
-            # save everything as pickle file
-            if auto_encoder_test:
-                save_data = {'ref_sim_w_eof' : ref_sims,'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
-                pickle.dump(save_data, open(save_name, "wb"), protocol=4)
-                print('done')
-            else:
-                save_data = {'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
-                pickle.dump(save_data, open(save_name, "wb"), protocol=4)
-                print('done')
-        else:
-
-            # remove data with clouds                                                                                          
-            idx = state_names.index('PreprocessingResults/cloud_flag_idp')
-            ref_sims = ref_sims[states[:, idx] == 3, :]
-            ref_sims_no_eof = ref_sims_no_eof[states[:, idx] == 3, :]
-            ref_obs = ref_obs[states[:, idx] == 3, :]
-            uncerts = uncerts[states[:, idx] == 3, :]
-            wls = wls[states[:, idx] == 3, :]
-            states = states[states[:, idx] == 3, :]
-            num_colors = num_colors[states[:, idx] == 3, :]
-
-
-
-            # downsample data to be saved                                                                                      
-            if downsample:
-                percent_sample = 0.4
-                # randomly sample the array                                                                                    
-                np.random.seed(0)
-                idx = np.random.choice(ref_sims.shape[0], int(ref_sims.shape[0]*percent_sample), replace=False)
-                ref_sims = ref_sims[idx, :]
-                wls = wls[idx, :]
-                ref_obs = ref_obs[idx, :]
-                ref_sims_no_eof = ref_sims_no_eof[idx, :]
-                uncerts = uncerts[idx, :]
-                states = states[idx, :]
-                num_colors = num_colors[idx, :]
-
-            # save everything as pickle file
-            save_data = {'ref_sim': ref_sims, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
-            pickle.dump(save_data, open(save_name, "wb"), protocol=4)
-            print('done')
-
-
+        region = 'Land'
     else:
+        save_name = '/scratch-science/algorithm/wkeely/Data/L2DiaGL_XCO2_' + year + '_'+month+'_'+day+'.p'
+        files = glob.glob('/data/oco2/ops/product/Ops_B11006_r02/' + year + '/'+ month+'/'+day+'/L2Dia/oco2_L2DiaGL*.h5')
+        region = 'Ocean'
+
+    if debug:
+        files = files[:5]
+        
+    ref_sim = 'SpectralParameters/modeled_radiance'
+    ref_ob = 'SpectralParameters/measured_radiance'
+    ob_uncert = 'SpectralParameters/measured_radiance_uncert'
+    sample_idx = 'SpectralParameters/sample_indexes'
+    num_color = 'SpectralParameters/num_colors_per_band'
+    # co2_profile_ap = 'RetrievalResults/co2_profile_apriori'
+    # co2_profile = 'RetrievalResults/co2_profile'
+    # press_weight = 'RetrievalResults/xco2_pressure_weighting_function'
+
+    var_names = ['RetrievalResults/surface_pressure_apriori_fph',
+                'RetrievalResults/wind_speed_apriori', 'RetrievalResults/eof_1_scale_weak_co2', 'RetrievalResults/eof_1_scale_strong_co2',
+                    'RetrievalResults/eof_1_scale_o2', 'RetrievalResults/eof_2_scale_weak_co2', 'RetrievalResults/eof_2_scale_strong_co2', 
+                    'RetrievalResults/eof_2_scale_o2', 'RetrievalResults/eof_3_scale_weak_co2', 'RetrievalResults/eof_3_scale_strong_co2',
+                    'RetrievalResults/eof_3_scale_o2', 'RetrievalGeometry/retrieval_solar_zenith', 'RetrievalGeometry/retrieval_zenith',
+                        'RetrievalGeometry/retrieval_solar_azimuth', 'RetrievalGeometry/retrieval_azimuth', 'PreprocessingResults/surface_pressure_apriori_abp', 
+                        'PreprocessingResults/dispersion_multiplier_abp', 'RetrievalHeader/sounding_id',
+                        'RetrievalGeometry/retrieval_longitude', 'RetrievalGeometry/retrieval_latitude',
+                            'RetrievalResults/xco2', 'RetrievalGeometry/retrieval_solar_zenith',
+                    'RetrievalGeometry/retrieval_land_fraction', 'RetrievalGeometry/retrieval_solar_distance',
+                    'PreprocessingResults/cloud_flag_idp', 'RetrievalResults/outcome_flag']
+
+
+    print('Reading State Vectors')
+    # # get radiance
+    ref_sims = []
+    ref_obs = []
+    uncerts = []
+    sample_idxs = []
+    num_colors = []
+    wls = []
+    state_names = []
+    states = []
+    f_vars = [] 
+
+    # press_weights = []
+    co2_profile_aps = []
+    co2_profiles = []
       
-        save_name = './L2DiaGL_XCO2_' + year + '_'+month+'_'+day+'.p'
-        files = glob.glob('/data/oco2/ops/product/Ops_B11006_r02/' + year + '/'+ month+'/'+day+'/*/L2Dia/oco2_L2DiaGL*.h5')
 
-        if debug:
-            files = files[::100]
-        
-        ref_sim = 'SpectralParameters/modeled_radiance'
-        ref_ob = 'SpectralParameters/measured_radiance'
-        ob_uncert = 'SpectralParameters/measured_radiance_uncert'
-        sample_idx = 'SpectralParameters/sample_index'
-        num_color = 'SpectralParameters/num_colors_per_band'
+    for file in files:
+        print(file)
+        # try to open file and get variables
 
-
-        var_names = ['RetrievalResults/surface_pressure_apriori_fph',
-                    'RetrievalResults/wind_speed_apriori', 'RetrievalResults/eof_1_scale_weak_co2', 'RetrievalResults/eof_1_scale_strong_co2',
-                        'RetrievalResults/eof_1_scale_o2', 'RetrievalResults/eof_2_scale_weak_co2', 'RetrievalResults/eof_2_scale_strong_co2', 
-                        'RetrievalResults/eof_2_scale_o2', 'RetrievalResults/eof_3_scale_weak_co2', 'RetrievalResults/eof_3_scale_strong_co2',
-                        'RetrievalResults/eof_3_scale_o2', 'RetrievalGeometry/retrieval_solar_zenith', 'RetrievalGeometry/retrieval_zenith',
-                            'RetrievalGeometry/retrieval_solar_azimuth', 'RetrievalGeometry/retrieval_azimuth', 'PreprocessingResults/surface_pressure_apriori_abp', 
-                            'PreprocessingResults/dispersion_multiplier_abp', 'RetrievalHeader/sounding_id',
-                            'RetrievalGeometry/retrieval_longitude', 'RetrievalGeometry/retrieval_latitude',
-                                'RetrievalResults/xco2', 'RetrievalGeometry/retrieval_solar_zenith',
-                        'RetrievalGeometry/retrieval_land_fraction', 'RetrievalGeometry/retrieval_solar_distance',
-                        'PreprocessingResults/cloud_flag_idp']
-        
-        print('Reading State Vectors')
-        # # get radiance
-        ref_sims = []
-        ref_obs = []
-        uncerts = []
-        sample_idxs = []
-        num_colors = []
-        wls = []
-        state_names = []
-        states = []
-        f_vars = []
-
-        for file in files:
-            print(file)
-            f = h5.File(file, 'r')
-            # get radiance
-            r_sim = f.get(ref_sim)[()]
-            r_ob = f.get(ref_ob)[()]
-            r_uncert = f.get(ob_uncert)[()]
-            r_sample_idx = f.get(sample_idx)[()]
-            r_color = f.get(num_color)[()]
-            if len(r_sim) < 10:
-                print('skipping because len(r_sim) = ' + str(len(r_sim)))
-                continue
-            if len(r_ob) < 10:
-                print('skipping because len(r_ob) = ' + str(len(r_ob)))
-                continue
-            if r_sim.shape[1] >= 2300:
-                print('skipping because r_sim.shape[1] = ' + str(r_sim.shape[1]))
-                continue
-            if r_ob.shape[1] >= 2300:
-                print('skipping because r_ob.shape[1] = ' + str(r_ob.shape[1]))
-                continue
-            # get wavelengths
-            w = f.get('SpectralParameters/wavelength')[()]
-            # get vars
-            vars = []
-            for v in var_names:
-                # print(v) # uncomment for debugging
-                var = f.get(v)[()]
-                if var.ndim == 2:
-                    # split up into multiple variables
-                    for i in range(var.shape[1]):
-                        var_i = var[:, i]
-                        vars.append(var_i)
-                        state_names.append(v + str(i))
-                else:
-                    vars.append(var)
-                    state_names.append(v)
-            # make into numpy array
-            vars = np.stack(vars, 1)
-            # if vars.shape[1] <= len(var_names):
-            #     print('skipping because vars.shape[1] = ' + str(vars.shape[1]))
-            #     continue
-
-            # append to list
-            ref_sims.append(r_sim)
-            ref_obs.append(r_ob)
-            uncerts.append(r_uncert)
-            sample_idxs.append(r_sample_idx)
-            num_colors.append(r_color)
-            wls.append(w)
-            f_vars.append(vars)
-
-        ref_sims = np.concatenate(ref_sims, 0)
-        ref_obs = np.concatenate(ref_obs, 0)
-        uncerts = np.concatenate(uncerts, 0)
-        sample_idxs = np.concatenate(sample_idxs, 0)
-        num_colors = np.concatenate(num_colors, 0)
-        wls = np.concatenate(wls, 0)
-        states = np.concatenate(f_vars, 0)
-
-        # remove land glint
-        idx = state_names.index('RetrievalGeometry/retrieval_land_fraction')
-        ref_sims = ref_sims[states[:, idx] ==100, :]
-        ref_obs = ref_obs[states[:, idx] ==100, :]
-        uncerts = uncerts[states[:, idx] ==100, :]
-        wls = wls[states[:, idx] ==100, :]
-        states = states[states[:, idx] ==100, :]
-        num_colors = num_colors[states[:, idx] ==100, :]
-
-        
+        f = h5.File(file, 'r')
+        # get radiance
+        r_sim = f.get(ref_sim)[()]
+        r_ob = f.get(ref_ob)[()]
+        r_uncert = f.get(ob_uncert)[()]
+        r_sample_idx = f.get(sample_idx)[()]
+        r_color = f.get(num_color)[()]
+        # r_press_weight = f.get(press_weight)[()]
+        # r_co2_profile_ap = f.get(co2_profile_ap)[()]
+        # r_co2_profile = f.get(co2_profile)[()]
 
 
-        if remove_eofs:
-            print('Removing EOFs ...')
 
-            # EOF path
-            eof_path = './EOF/OCO2_qtsb11_eofs_00000-40000_oceanG_alt2_falt1_L2.h5'
-            eof_file = h5.File(eof_path, 'r')
-
-            # EOFs for O2A band for each footprint
-            eof_1_o2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_1_waveform_1'][:]
-            eof_2_o2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_2_waveform_1'][:]
-            eof_3_o2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_3_waveform_1'][:]
-
-            # EOFs for WCO2 band for each footprint
-            eof_1_wco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_1_waveform_2'][:]
-            eof_2_wco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_2_waveform_2'][:]
-            eof_3_wco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_3_waveform_2'][:]
-
-            # EOFs for SCO2 band for each footprint
-            eof_1_sco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_1_waveform_3'][:]
-            eof_2_sco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_2_waveform_3'][:]
-            eof_3_sco2 = eof_file['Instrument/EmpiricalOrthogonalFunction/Ocean/EOF_3_waveform_3'][:]
-
-            # get the footprint which is the last digit of the sounding id
-            idx = state_names.index('RetrievalHeader/sounding_id')
-            sid = states[:, idx]
-            footprints = sid % 10
-            footprints = footprints.astype(int)
-
-            # get the scaling factors for each eof
-            eof_scale_1_1 = states[:, state_names.index('RetrievalResults/eof_1_scale_o2')]
-            eof_scale_1_2 = states[:, state_names.index('RetrievalResults/eof_2_scale_o2')]
-            eof_scale_1_3 = states[:, state_names.index('RetrievalResults/eof_3_scale_o2')]
-
-            eof_scale_2_1 = states[:, state_names.index('RetrievalResults/eof_1_scale_weak_co2')]
-            eof_scale_2_2 = states[:, state_names.index('RetrievalResults/eof_2_scale_weak_co2')]
-            eof_scale_2_3 = states[:, state_names.index('RetrievalResults/eof_3_scale_weak_co2')]
-
-            eof_scale_3_1 = states[:, state_names.index('RetrievalResults/eof_1_scale_strong_co2')]
-            eof_scale_3_2 = states[:, state_names.index('RetrievalResults/eof_2_scale_strong_co2')]
-            eof_scale_3_3 = states[:, state_names.index('RetrievalResults/eof_3_scale_strong_co2')]
-
-            ref_sims_no_eof = []
-
-            # replace sample indices with -2147483647 with np.nan
-            # sample_idxs[sample_idxs == -2147483647] = np.nan
-
-            for idx, fp in enumerate(footprints):
-                print(idx, fp)
-                print(ref_sims[idx].shape)
-                print(uncerts[idx].shape)
-                print(sample_idxs[idx].shape)
-                print(num_colors[idx].shape)
-                print(eof_1_o2[fp].shape)
-
-                padding = np.zeros(np.sum(ref_sims[idx]==-9.9999900e+05))
-                padding.fill(-9.9999900e+10)
-                #print(padding.shape)
-                # O2A band
-                x = eof_1_o2[fp,sample_idxs[idx,:num_colors[idx,0]]] * uncerts[idx,:num_colors[idx,0]]
-                # if idx == 0:
-                #     plt.plot(x),plt.show()
-                #     print(x.shape)
-                s11 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t11 = (x * s11)
-                term_o2_1 = t11  * eof_scale_1_1[idx]
-
-                x = eof_2_o2[fp,sample_idxs[idx,:num_colors[idx,0]]] * uncerts[idx,:num_colors[idx,0]]
-                s12 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t12 = (x * s12)
-                term_o2_2 = t12 * eof_scale_1_2[idx]
-
-                x = eof_3_o2[fp,sample_idxs[idx,:num_colors[idx,0]]] * uncerts[idx,:num_colors[idx,0]]
-                s13 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t13 = (x * s13)
-                term_o2_3 = t13 * eof_scale_1_3[idx]
-
-                # terms to concatenate for o2a band.
-                term1 = (term_o2_1+term_o2_2+term_o2_3)
-
-                #WCO2 band
-                x = eof_1_wco2[fp,sample_idxs[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]] * uncerts[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]
-                # if idx == 0:
-                #     plt.plot(x),plt.show()
-                #     print(x.shape)
-                s21 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t21 = (x * s21)
-                term_wco2_1 = t21 * eof_scale_2_1[idx]
-
-                x = eof_2_wco2[fp,sample_idxs[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]] * uncerts[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]
-                s22 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t22 = (x * s22)
-                term_wco2_2 = t22 * eof_scale_2_2[idx]
-
-                x = eof_3_wco2[fp,sample_idxs[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]] * uncerts[idx,num_colors[idx,0]:num_colors[idx,0]+num_colors[idx,1]]
-                s23 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t23 = (x * s23)
-                term_wco2_3 = t23 * eof_scale_2_3[idx]
-
-                # terms to concatenate for wco2 band.
-                term2 = (term_wco2_1+term_wco2_2+term_wco2_3)
-
-                #SCO2 band
-                x = eof_1_sco2[fp,sample_idxs[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]] * uncerts[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]
-                # if idx == 0:
-                #     plt.plot(x),plt.show()
-                #     print(x.shape)
-                s31 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t31 = (x * s31)
-                term_sco2_1 = t31 * eof_scale_3_1[idx]
-
-                x = eof_2_sco2[fp,sample_idxs[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]] * uncerts[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]
-                s32 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t32 = (x * s32)
-                term_sco2_2 = t32 * eof_scale_3_2[idx]
-
-                x = eof_3_sco2[fp,sample_idxs[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]] * uncerts[idx,num_colors[idx,0]+num_colors[idx,1]:num_colors[idx,0]+num_colors[idx,1]+num_colors[idx,2]]
-                s33 = 1e+19 / np.sqrt(sum((x - np.mean(x))**2)/(1016-1))
-                t33 = (x * s33)
-                term_sco2_3 = t33 * eof_scale_3_3[idx]
-
-                # terms to concatenate for sco2 band.
-                term3 = (term_sco2_1+term_sco2_2+term_sco2_3)
-
-
-                # concatenate the terms
-                scaled_eof = np.concatenate((term1,term2,term3,padding),axis=0)
-                ref_sims_no_eof.append(ref_sims[idx,:] - scaled_eof)
-
-
-            # same shape as ref_sims
-            ref_sims_no_eof = np.stack(ref_sims_no_eof,0)
-
-
-            # remove data with clouds
-            idx = state_names.index('PreprocessingResults/cloud_flag_idp')
-            ref_sims = ref_sims[states[:, idx] == 3, :]
-            ref_sims_no_eof = ref_sims_no_eof[states[:, idx] == 3, :]
-            ref_obs = ref_obs[states[:, idx] == 3, :]
-            uncerts = uncerts[states[:, idx] == 3, :]
-            wls = wls[states[:, idx] == 3, :]
-            states = states[states[:, idx] == 3, :]
-            num_colors = num_colors[states[:, idx] == 3, :]
-            states = np.delete(states, idx, 1)
-            state_names.remove('PreprocessingResults/cloud_flag_idp')
-
-
-            # downsample data to be saved
-            if downsample:
-                percent_sample = 0.4
-                # randomly sample the array
-                np.random.seed(0)
-                idx = np.random.choice(ref_sims.shape[0], int(ref_sims.shape[0]*percent_sample), replace=False)
-                ref_sims = ref_sims[idx, :]
-                wls = wls[idx, :]
-                ref_obs = ref_obs[idx, :]
-                ref_sims_no_eof = ref_sims_no_eof[idx, :]
-                uncerts = uncerts[idx, :]
-                states = states[idx, :]
-                num_colors = num_colors[idx, :]
-
-            # save everything as pickle file
-            if auto_encoder_test:
-                save_data = {'ref_sim_w_eof' : ref_sims,'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
-                pickle.dump(save_data, open(save_name, "wb"), protocol=4)
-                print('done')
+        # if len(r_sim) < 10:
+        #     print('skipping because len(r_sim) = ' + str(len(r_sim)))
+        #     continue
+        # if len(r_ob) < 10:
+        #     print('skipping because len(r_ob) = ' + str(len(r_ob)))
+        #     continue
+        # if r_sim.shape[1] >= 2300:  # 68
+        #     print('skipping because r_sim.shape[1] = ' + str(r_sim.shape[1]))
+        #     continue
+        # if r_ob.shape[1] >= 2300:  # 68
+        #     print('skipping because r_ob.shape[1] = ' + str(r_ob.shape[1]))
+        #     continue
+        # if r_co2_profile_ap.shape[1] < 20:
+        #     continue
+        # if r_co2_profile.shape[1] < 20:
+        #     continue
+        # get wavelengths
+        w = f.get('SpectralParameters/wavelength')[()]
+        # get vars
+        vars = []  # list that contains the vars
+        for v in var_names:
+            # print(v) # uncomment for debugging
+            var = f.get(v)[()]
+            if var.ndim == 2:  # for 2D variables (e.g. CO2 profile)
+                # split up into multiple variables
+                for i in range(var.shape[1]):
+                    var_i = var[:, i]
+                    vars.append(var_i)
+                    state_names.append(v + str(i))
             else:
-                save_data = {'ref_sim': ref_sims_no_eof, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors}
-                pickle.dump(save_data, open(save_name, "wb"), protocol=4)
-                print('done')
+                vars.append(var)
+                state_names.append(v)
+        # make into numpy array
+        vars = np.stack(vars, 1)
+        # if vars.shape[1] <= len(var_names):  # 68
+        #     print('skipping because vars.shape[1] = ' + str(vars.shape[1]))
+        #     continue
+
+        # add zero padding to refs, wls, uncert, and sample_idx
+        r_sim_pad = np.zeros((r_sim.shape[0], 2300))
+        r_sim_pad[:,:r_sim.shape[1]] = r_sim
+        r_sim = r_sim_pad
+
+        r_ob_pad = np.zeros((r_ob.shape[0], 2300))
+        r_ob_pad[:,:r_ob.shape[1]] = r_ob
+        r_ob = r_ob_pad
+
+        r_uncert_pad = np.zeros((r_uncert.shape[0], 2300))
+        r_uncert_pad[:,:r_uncert.shape[1]] = r_uncert
+        r_uncert = r_uncert_pad
+
+        r_sample_idx_pad = np.zeros((r_sample_idx.shape[0], 2300))
+        r_sample_idx_pad[:,:r_sample_idx.shape[1]] = r_sample_idx
+        r_sample_idx = r_sample_idx_pad
+
+        w_pad = np.zeros((w.shape[0], 2300))
+        w_pad[:,:w.shape[1]] = w
+        w = w_pad
+
+
+        # append to list
+        ref_sims.append(r_sim)
+        ref_obs.append(r_ob)
+        uncerts.append(r_uncert)
+        sample_idxs.append(r_sample_idx)
+        num_colors.append(r_color)
+        wls.append(w)
+        f_vars.append(vars)
+        # press_weights.append(r_press_weight)
+        # co2_profile_aps.append(r_co2_profile_ap)
+        # co2_profiles.append(r_co2_profile)
+
+    if ref_sims == []:
+        print('no data for this day')
+        return
+
+    
+    ref_sims = np.concatenate(ref_sims, 0)
+    ref_obs = np.concatenate(ref_obs, 0)
+    uncerts = np.concatenate(uncerts, 0)
+    sample_idxs = np.concatenate(sample_idxs, 0)
+    num_colors = np.concatenate(num_colors, 0)
+    wls = np.concatenate(wls, 0)
+    states = np.concatenate(f_vars, 0)
+    # press_weights = np.concatenate(press_weights, 0)
+    # co2_profile_aps = np.concatenate(co2_profile_aps, 0)
+    # co2_profiles = np.concatenate(co2_profiles, 0)
+
+        # remove glint land
+    if not nadir:
+            idx = state_names.index('RetrievalGeometry/retrieval_land_fraction')
+            ref_sims = ref_sims[states[:, idx] ==100, :]
+            ref_obs = ref_obs[states[:, idx] ==100, :]
+            uncerts = uncerts[states[:, idx] ==100, :]
+            wls = wls[states[:, idx] ==100, :]
+            states = states[states[:, idx] ==100, :]
+            num_colors = num_colors[states[:, idx] ==100, :]
+            # co2_profile_aps = co2_profile_aps[states[:, idx] ==100, :]
+            # co2_profiles = co2_profiles[states[:, idx] ==100, :]
+
+    # remove data with clouds
+    idx = state_names.index('PreprocessingResults/cloud_flag_idp')
+    ref_sims = ref_sims[states[:, idx] == 3, :]
+    ref_obs = ref_obs[states[:, idx] == 3, :]
+    uncerts = uncerts[states[:, idx] == 3, :]
+    wls = wls[states[:, idx] == 3, :]
+    num_colors = num_colors[states[:, idx] == 3, :]
+    # co2_profile_aps = co2_profile_aps[states[:, idx] == 3, :]
+    # co2_profiles = co2_profiles[states[:, idx] == 3, :]
+    states = states[states[:, idx] == 3, :]
+    states = np.delete(states, idx, 1)
+    state_names.remove('PreprocessingResults/cloud_flag_idp')
+
+    # downsample data to be saved
+    if downsample:
+        if nadir:
+            percent_sample = 0.9
         else:
+            percent_sample = 0.5
+        # randomly sample the array
+        np.random.seed(0)
+        idx = np.random.choice(ref_sims.shape[0], int(ref_sims.shape[0]*percent_sample), replace=False)
+        ref_sims = ref_sims[idx, :]
+        wls = wls[idx, :]
+        ref_obs = ref_obs[idx, :]
+        uncerts = uncerts[idx, :]
+        states = states[idx, :]
+        num_colors = num_colors[idx, :]
+        # co2_profile_aps = co2_profile_aps[idx, :]
+        # co2_profiles = co2_profiles[idx, :]
 
-            # remove data with clouds
-            idx = state_names.index('PreprocessingResults/cloud_flag_idp')
-            ref_sims = ref_sims[states[:, idx] == 3, :]
-            ref_sims_no_eof = ref_sims_no_eof[states[:, idx] == 3, :]
-            ref_obs = ref_obs[states[:, idx] == 3, :]
-            uncerts = uncerts[states[:, idx] == 3, :]
-            wls = wls[states[:, idx] == 3, :]
-            states = states[states[:, idx] == 3, :]
-            states = np.delete(states, idx, 1)
-            state_names.remove('PreprocessingResults/cloud_flag_idp')
+    print('saving pickle ...')
+    save_data = {'ref_sim': ref_sims, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names,
+                'num_color': num_colors, 'sample_idxs' : sample_idxs, 'uncerts' : uncerts}
+    pickle.dump(save_data, open(save_name, "wb"), protocol=4)
+    print('done')
 
-
-
-            # downsample data to be saved
-            if downsample:
-                percent_sample = 0.4
-                # randomly sample the array
-                np.random.seed(0)
-                idx = np.random.choice(ref_sims.shape[0], int(ref_sims.shape[0]*percent_sample), replace=False)
-                ref_sims = ref_sims[idx, :]
-                wls = wls[idx, :]
-                ref_obs = ref_obs[idx, :]
-                ref_sims_no_eof = ref_sims_no_eof[idx, :]
-                uncerts = uncerts[idx, :]
-                states = states[idx, :]
-
-            # save everything as pickle file
-            save_data = {'ref_sim': ref_sims, 'ref_obs' : ref_obs, 'wl': wls, 'state': states, 'state_var': state_names}
-            pickle.dump(save_data, open(save_name, "wb"), protocol=4)
-            print('done')
+    # save everything as pickle file
 
 
+    # save everything as pickle file
+    # print('o2_band length : ', len(o2_band))
+    # if auto_encoder:
+    #     save_data = {'o2_no_eof' : o2_band_no_eof, 'o2_with_eof' : o2_band, 'o2_obs' : o2_band_obs,
+    #                     'wco2_no_eof' : wco2_band_no_eof, 'wco2_with_eof' : wco2_band, 'wco2_obs' : wco2_band_obs,
+    #                     'sco2_no_eof' : sco2_band_no_eof, 'sco2_with_eof' : sco2_band, 'sco2_obs' : sco2_band_obs,
+    #                     'wl': wls, 'state': states, 'state_var': state_names}
+    #     pickle.dump(save_data, open(save_name, "wb"), protocol=4)
+    #     print('done')
+    #     # close the files in the glob
+    #     f.close()
+    # else:
+    #     save_data = {'o2_no_eof' : o2_band_no_eof, 'o2_obs' : o2_band_obs,
+    #                     'wco2_no_eof' : wco2_band_no_eof, 'wco2_obs' : wco2_band_obs,
+    #                         'sco2_no_eof' : sco2_band_no_eof, 'sco2_obs' : sco2_band_obs,
+    #             'wl': wls, 'state': states, 'state_var': state_names, 'num_colors': num_colors,
+    #             'co2_profile': co2_profile, 'co2_profile_prior' : co2_profile_ap}
+    #     pickle.dump(save_data, open(save_name, "wb"), protocol=4)
+    #     print('done')
+    #     # close the files in the glob
+    #     f.close()
+            
 
-                            
- # MAKE CHANGES HERE: run one year at a time. Finalize soundings for that year and then clear scratch-science.
+
+
+
 
 if __name__ == '__main__':
     years = ['2015']
     months = ['01','02','03','04','05','06','07','08','09','10','11','12']
-    # days_odd = ['01','03','05','07','09','11','13','15','17','19','21','23','25','27','29'] # use for glint
-    days_all = ['01','02','03','04','05','06','07','08','09','10','11','12','13','14','15',
-                '16','17','18','19','20','21','22','23','24','25','26','27','28','29']
+    days = ['01','02','03','04','05','06','07','08','09','10',
+            '11','12','13','14','15','16','17','18','19','20',
+            '21','22','23','24','25','26','27','28','29']
+    # days = None
+    
     with Pool(2) as p:
-        pool_map = make_pool_map(years, months, days_all)
-        # pool_map = make_pool_map(years, months, )
-        p.map(main, pool_map)
+        p.map(main, make_pool_map(years,months,days))
+
+        
+            
+            
