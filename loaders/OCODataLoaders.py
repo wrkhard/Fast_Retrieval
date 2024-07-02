@@ -229,11 +229,7 @@ class RetrievalDataSet(Dataset):
                                     'psurf_prior_mean': psurf_prior_mean, 'psurf_prior_std': psurf_prior_std,
                                     'geometry_mean': geometry_mean, 'geometry_std': geometry_std,
                                  'targets_mean': targets_mean, 'targets_std': targets_std}, file)
-                    
-                # use the first 3000 samples for training
-                # X = X[:5000]
-                # y = y[:5000]
-                
+                                   
 
 
         print(X.shape)
