@@ -21,7 +21,7 @@ from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, Learning
 from lightning import Trainer
 
 
-from OCODataLoaders import RetrievalDataModule, RetrievalDataSet
+from loaders/OCODataLoaders import RetrievalDataModule, RetrievalDataSet
 from trainers import RetrievalTrainer, SimDiffTrainer
 from models import LinearMLP, NonlinearMLP, Conv1DNN
 
