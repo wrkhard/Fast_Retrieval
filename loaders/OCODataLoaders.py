@@ -53,16 +53,16 @@ import pickle
 
 import torch
 from torch import Tensor
-from torch.utils.data import Dataset
-import lightning.pytorch as pl
-from torch.utils.data import DataLoader
+import lightning as pl
+from torch.utils.data import DataLoader, Dataset, random_split
 
 class RetrievalDataSet(Dataset):
     '''OCO-2 DataSet for Xgas retrieval'''
-    def __init__(self, files, train=True, normalize=True, use_convolutions=False, transform=None, normalize_file='normalize.pkl'):
+    def __init__(self, files, train=True, normalize=True, n_test = 10000,use_convolutions=False, transform=None, normalize_file='retrieval_normalize_stats.pkl'):
         self.files = files
         self.train = train
         self.normalize = normalize
+        self.n_test = n_test
         self.transform = transform
         self.normalize_file = normalize_file
         self.use_convolutions = use_convolutions
@@ -98,12 +98,12 @@ class RetrievalDataSet(Dataset):
         
         for key in data:
             data[key] = data[key][~mask]
-            if self.normalize:
-                if self.train:
-                    self.calculate_and_save_normalization_params(data)
-                    self.apply_normalization(data)
-                else:
-                    self.apply_normalization(data)
+
+        if self.normalize:
+            if self.train:
+                self.calculate_apply_and_save_normalization_params(data)
+            else:
+                self.apply_normalization(data)
 
         X = torch.cat([data['o2'], data['wco2'], data['sco2'], data['psurf_prior'], data['geometry']], axis=1)
         y = data['y']
@@ -111,6 +111,13 @@ class RetrievalDataSet(Dataset):
         if self.use_convolutions:
             X = X.unsqueeze(0)
             y = y.unsqueeze(0)
+        if not self.train:
+            # set seed for reproducibility
+            np.random.seed(42)
+            # sample from the test set
+            idx = np.random.choice(X.shape[0], self.n_test, replace=False)
+            X = X[idx]
+            y = y[idx]
 
         return X, y
 
@@ -121,7 +128,7 @@ class RetrievalDataSet(Dataset):
             mean, std = norm_params[f'{key}_mean'], norm_params[f'{key}_std']
             data[key] = (data[key] - mean) / std
 
-    def calculate_and_save_normalization_params(self, data):
+    def calculate_apply_and_save_normalization_params(self, data):
         norm_params = {}
         for key in ['sco2', 'wco2', 'o2', 'psurf_prior', 'geometry', 'y']:
             mean = torch.mean(data[key])
@@ -178,7 +185,7 @@ class RetrievalDataModule(pl.LightningDataModule):
     def get_target_shape(self):  
         if self.train_dataset is not None:
             # Access the dataset to get the shape of the inputs
-            dataset = self.test_dataset.dataset
+            dataset = self.train_dataset.dataset
             return dataset.y.shape
         else:   
             raise ValueError("Training dataset is not initialized. Please run setup with stage='fit' first.")
