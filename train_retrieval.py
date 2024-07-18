@@ -132,7 +132,7 @@ def main(args):
             # 'L2DiaND_XCO2_2017_downsampled_eof_removed_aligned.p',
             # 'L2DiaND_XCO2_2018_downsampled_eof_removed_aligned.p',
             # 'L2DiaND_XCO2_2019_downsampled_eof_removed_aligned.p',
-            'L2DiaND_XCO2_2020_downsampled_eof_removed_aligned.p',
+            # 'L2DiaND_XCO2_2020_downsampled_eof_removed_aligned.p',
             'L2DiaND_XCO2_2021_downsampled_eof_removed_aligned.p',
             ]
         test_list = [
